@@ -20,7 +20,6 @@
             --success: #7ED957;  /* 太簡單 - 綠 */
             --gold: #FFD700;
 
-```
         /* Familiarity Tier Colors */
         --color-new: #ffffff;      
         --color-learning: #FFD1DC; 
@@ -277,7 +276,6 @@
         }
     }
 </style>
-```
 
 </head>
 <body>
@@ -287,7 +285,6 @@
         <h1 class="app-title">🌸 妹妹的認字冒險</h1>
     </div>
 
-```
 <!-- Stats Header -->
 <div class="stats-card">
     <div class="stats-grid">
@@ -355,7 +352,6 @@
     <button onclick="document.getElementById('import-input').click()" style="background:none; border:1px solid #ccc; font-size:10px; padding:6px 12px; border-radius:8px;">📤 載入紀錄</button>
     <input type="file" id="import-input" class="hidden" accept=".json" onchange="importData(event)">
 </div>
-```
 
 </div>
 
@@ -977,21 +973,22 @@
 
     function openSingleFlashcard(k) { renderSRSContent(k, false); document.getElementById('modal-overlay').style.display='flex'; }
     
+    // 修正：使用單引號包覆 onclick，解決雙引號衝突
     function renderSRSContent(k, s) {
         const content = document.getElementById('modal-content'); 
         let fs = k.length===1?'180px':(k.length===2?'130px':(k.length===3?'90px':'70px'));
         const safeK = escapeHtml(k);
-        const jsK = JSON.stringify(k);  // 安全的 JS 字串常值
+        const jsK = JSON.stringify(k);  // 安全的 JS 字串常值，如 "上"
         content.innerHTML = `
             <button onclick="closeModal()" style="position:absolute;top:20px;right:20px;border:none;background:none;font-size:28px;color:#ccc;">✕</button>
             <div class="flashcard-main" style="font-size:${fs}">${safeK}</div>
             <div style="width:100%;">
                 <p style="font-size:10px; color:#A1887F; margin-bottom:10px; text-align:center;">家長記錄熟悉度</p>
                 <div class="srs-controls">
-                    <button class="srs-btn btn-again" onclick="handleSRS(${jsK},1,${s})">忘記<span>明天見</span></button>
-                    <button class="srs-btn btn-hard" onclick="handleSRS(${jsK},2,${s})">困難<span>再看一次</span></button>
-                    <button class="srs-btn btn-good" onclick="handleSRS(${jsK},3,${s})">記得<span>穩步長大</span></button>
-                    <button class="srs-btn btn-easy" onclick="handleSRS(${jsK},4,${s})">太簡單<span>跳級</span></button>
+                    <button class="srs-btn btn-again" onclick='handleSRS(${jsK},1,${s})'>忘記<span>明天見</span></button>
+                    <button class="srs-btn btn-hard" onclick='handleSRS(${jsK},2,${s})'>困難<span>再看一次</span></button>
+                    <button class="srs-btn btn-good" onclick='handleSRS(${jsK},3,${s})'>記得<span>穩步長大</span></button>
+                    <button class="srs-btn btn-easy" onclick='handleSRS(${jsK},4,${s})'>太簡單<span>跳級</span></button>
                 </div>
             </div>`;
     }
@@ -1010,6 +1007,7 @@
         renderQuizStep(); document.getElementById('modal-overlay').style.display = 'flex';
     }
 
+    // 修正：使用單引號包覆 onclick，解決雙引號衝突
     function renderQuizStep() {
         if (quizData.current > quizData.total) return renderQuizResult();
         const pair = state.similarPairs[Math.floor(Math.random() * state.similarPairs.length)];
@@ -1020,7 +1018,7 @@
         document.getElementById('modal-content').innerHTML = `
             <div style="position:absolute; top:20px; font-size:14px; color:var(--primary); font-weight:700;">✨ 第 ${quizData.current} / ${quizData.total} 題 ✨</div>
             <div style="margin-top:40px;">找到這個字：</div><div class="flashcard-main" style="font-size:130px;margin:20px 0;">${safeTarget}</div>
-            <div id="quiz-options" style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; width:100%;">${options.map(o=>`<button class="btn btn-outline" style="font-size:65px; padding:25px; border-radius:30px; height:140px; font-weight:700;" onclick="checkQuiz(this,${JSON.stringify(o)},${jsTarget})">${escapeHtml(o)}</button>`).join('')}</div>`;
+            <div id="quiz-options" style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; width:100%;">${options.map(o=>`<button class="btn btn-outline" style="font-size:65px; padding:25px; border-radius:30px; height:140px; font-weight:700;" onclick='checkQuiz(this,${JSON.stringify(o)},${jsTarget})'>${escapeHtml(o)}</button>`).join('')}</div>`;
     }
 
     function renderQuizResult() { fireConfetti(); document.getElementById('modal-content').innerHTML = `<div class="flashcard-main" style="flex-direction:column; font-size:24px;"><h2 style="color:var(--primary);">🎊 挑戰完成！</h2><div style="font-size:80px; margin: 20px 0;">🏆</div><div style="font-weight:700;">妳答對了 ${quizData.score} 題！</div></div><button class="btn btn-primary" style="width:100%; height:55px; border-radius:25px;" onclick="closeModal()">回主頁看月曆</button>`; save(); }
@@ -1211,3 +1209,4 @@
 
 </body>
 </html>
+
