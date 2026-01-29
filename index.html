@@ -103,13 +103,27 @@
         .calendar-day span:not(.day-icon) { z-index: 1; opacity: 0.3; }
         .calendar-day.empty { background: transparent; border: none; }
 
-        /* Reward Area */
+        /* Reward Area - 修正：固定高度防止溢出 */
         .reward-area {
             background: white; border-radius: 24px; padding: 15px;
             border: 2px solid #FFD1DC; cursor: pointer; box-shadow: 0 4px 15px rgba(255, 126, 185, 0.05);
             flex: 1; min-width: 300px; display: flex; flex-direction: column; justify-content: center;
+            overflow: hidden; /* 防止內容溢出 */
         }
-        .sticker-preview { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 12px; min-height: 50px; align-items: center; }
+        
+        /* 修正：貼紙預覽區固定高度，超過顯示省略 */
+        .sticker-preview { 
+            display: flex; 
+            gap: 8px; 
+            padding-bottom: 12px; 
+            height: 50px; /* 固定高度 */
+            min-height: 50px;
+            max-height: 50px;
+            align-items: center; 
+            overflow: hidden; /* 隱藏超出部分 */
+            flex-wrap: nowrap; /* 不換行 */
+        }
+        
         .star-meter-container { display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 12px; border-top: 1.5px dashed #FFF0F5; }
         .star-box { font-size: 16px; color: var(--gold); display: flex; gap: 1px; }
 
@@ -152,9 +166,10 @@
         }
         .modal-content {
             background: white; border-radius: 40px; width: 95%; max-width: 550px;
-            min-height: 550px; padding: 30px 20px; position: relative;
+            min-height: min(550px, 90vh); padding: 30px 20px; position: relative;
             box-shadow: 0 20px 60px rgba(255, 126, 185, 0.25); border: 5px solid var(--primary);
-            display: flex; flex-direction: column; align-items: center; overflow-y: auto; max-height: 90vh;
+            display: flex; flex-direction: column; align-items: stretch; overflow-y: auto; max-height: 90vh;
+            -webkit-overflow-scrolling: touch; /* iOS 捲動慣性 */
         }
         .flashcard-main { font-weight: 700; color: var(--text); text-shadow: 6px 6px 0px #FFD1DC; flex-grow: 1; display: flex; align-items: center; justify-content: center; line-height: 1.1; text-align: center; width: 100%; }
 
@@ -179,10 +194,62 @@
         .tab.active { background: var(--primary); color: white; border-color: var(--primary); }
         .notification { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 2000; background: var(--text); color: white; padding: 10px 20px; border-radius: 20px; font-size: 13px; }
 
+        /* 修正：貼紙牆 Modal 專用樣式 */
+        .sticker-wall-container {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            height: 100%;
+            min-height: 0; /* 重要：允許 flex 子元素收縮 */
+        }
+        
+        .sticker-wall-header {
+            flex-shrink: 0;
+            text-align: center;
+            padding-bottom: 10px;
+            width: 100%;
+        }
+        
+        .sticker-grid-wrapper {
+            flex: 1;
+            min-height: 160px;
+            max-height: none;      /* 不限高度 */
+            overflow: visible;     /* 交給外層 modal 統一捲動 */
+            padding: 15px 0;
+            border-bottom: 2px dashed #FFF0F5;
+            margin-bottom: 15px;
+        }
+        
+        .sticker-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            width: 100%;
+        }
+        
+        .wish-section {
+            flex-shrink: 0;
+            background: #FFF0F5;
+            padding: 20px;
+            border-radius: 28px;
+            /* 不設 max-height 和 overflow，讓捲動只在 modal 層級 */
+        }
+
         @media (max-width: 768px) {
             .dashboard-row { flex-direction: column; }
             .input-section { grid-template-columns: 1fr; }
             .items-grid { grid-template-columns: repeat(3, 1fr); }
+            
+            /* 關鍵修正：手機版取消 flex 分配，根治日曆覆蓋貼紙問題 */
+            .calendar-section,
+            .reward-area {
+                flex: 0 0 auto;
+                min-width: 0;
+                height: auto;
+            }
+            .reward-area {
+                justify-content: flex-start;
+            }
         }
     </style>
 </head>
@@ -270,6 +337,51 @@
 
 <script>
     // --- Global Helpers ---
+    // 修正時區問題：使用本地日期字串
+    function localDateStr(d = new Date()) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+    }
+
+    // 日期加減（用於 streak 計算）
+    function addDays(dateStr, delta) {
+        const d = new Date(dateStr + "T00:00:00");
+        d.setDate(d.getDate() + delta);
+        return localDateStr(d);
+    }
+
+    // XSS 防護：HTML escape
+    function escapeHtml(str) {
+        return String(str)
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#39;');
+    }
+
+    // 數值 clamp（用於匯入資料範圍限制）
+    function clamp(n, min, max) {
+        n = Number(n);
+        if (!Number.isFinite(n)) return min;
+        return Math.min(max, Math.max(min, n));
+    }
+
+    // 確保字存在於字庫（用於 Quiz 答對時發星）
+    function ensureCharExists(ch) {
+        if (!state.characters[ch]) {
+            state.characters[ch] = { interval: 0, ease: 2.5, reps: 0, nextReview: Date.now(), lastStarDate: null, lastSRSDate: null };
+        }
+        return state.characters[ch];
+    }
+
+    // 清洗輸入字串：去掉逗號、頓號、空白等分隔符
+    function normalizeInputChars(str) {
+        return str.replace(/[，,、\s]+/g, '');
+    }
+
     function getCardColor(i) {
         if (i > 30) return 'var(--color-mature)';
         if (i > 10) return 'var(--color-mastered)';
@@ -321,20 +433,159 @@
         streak: 0, lastActivityDate: null, dailyHistory: {}, wishes: []
     };
     
+    // ===== SEEDED_STATE: 預設學習進度（當 localStorage 無資料時使用）=====
+    const SEEDED_STATE = {"characters":{"上":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891565772,"lastStarDate":"2026-01-27"},"下":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891578509,"lastStarDate":"2026-01-27"},"不":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891554611,"lastStarDate":"2026-01-27"},"丟":{"interval":1,"ease":2.5,"reps":1,"nextReview":1769638652287,"lastStarDate":"2026-01-27"},"乳":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"亮":{"interval":1,"ease":2.5,"reps":1,"nextReview":1769638784108,"lastStarDate":"2026-01-27"},"佩":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892518257,"lastStarDate":"2026-01-27"},"來":{"interval":1,"ease":2.5,"reps":1,"nextReview":1769638790909,"lastStarDate":"2026-01-27"},"個":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"優":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"公":{"interval":6,"ease":2.65,"reps":2,"nextReview":1770070560422,"lastStarDate":"2026-01-27"},"冰":{"interval":1,"ease":2.5,"reps":1,"nextReview":1769638777640,"lastStarDate":"2026-01-27"},"冷":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892522191,"lastStarDate":"2026-01-27"},"剪":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"動":{"interval":1,"ease":2.3,"reps":1,"nextReview":1769638472006,"lastStarDate":"2026-01-27"},"去":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769897863421,"lastStarDate":"2026-01-27"},"友":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"口":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891609725,"lastStarDate":"2026-01-27"},"吃":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891972423,"lastStarDate":"2026-01-27"},"呀":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769897968655,"lastStarDate":"2026-01-27"},"呆":{"interval":1,"ease":2.35,"reps":1,"nextReview":1769632891912,"lastStarDate":"2026-01-27"},"哈":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892226797,"lastStarDate":"2026-01-27"},"啊":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891663508,"lastStarDate":"2026-01-27"},"喝":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"喵":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892084793,"lastStarDate":"2026-01-27"},"嘴":{"interval":1,"ease":2.5,"reps":1,"nextReview":1769638675173,"lastStarDate":"2026-01-27"},"四":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891892443,"lastStarDate":"2026-01-27"},"園":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"土":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891827017,"lastStarDate":"2026-01-27"},"地":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891905944,"lastStarDate":"2026-01-27"},"多":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"太":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891894893,"lastStarDate":"2026-01-27"},"女":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891833884,"lastStarDate":"2026-01-27"},"姨":{"interval":1,"ease":2.5,"reps":1,"nextReview":1769638762771,"lastStarDate":"2026-01-27"},"子":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891921464,"lastStarDate":"2026-01-27"},"孩":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"宛":{"interval":1,"ease":2.35,"reps":1,"nextReview":1769632700995,"lastStarDate":"2026-01-27"},"少":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891829801,"lastStarDate":"2026-01-27"},"尿":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892320310,"lastStarDate":"2026-01-27"},"山":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891836101,"lastStarDate":"2026-01-27"},"師":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891976939,"lastStarDate":"2026-01-27"},"帽":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891845403,"lastStarDate":"2026-01-27"},"弟":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"心":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891840185,"lastStarDate":"2026-01-27"},"快":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"愛":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891927632,"lastStarDate":"2026-01-27"},"我":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891908330,"lastStarDate":"2026-01-27"},"手":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891858888,"lastStarDate":"2026-01-27"},"打":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891911881,"lastStarDate":"2026-01-27"},"搬":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891854054,"lastStarDate":"2026-01-27"},"書":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"朋":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891848619,"lastStarDate":"2026-01-27"},"木":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891985423,"lastStarDate":"2026-01-27"},"東":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892100945,"lastStarDate":"2026-01-27"},"果":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891862488,"lastStarDate":"2026-01-27"},"桃":{"interval":0,"ease":2.0999999999999996,"reps":0,"nextReview":1769552337434,"lastStarDate":null},"桌":{"interval":1,"ease":2.5,"reps":1,"nextReview":1769632483094,"lastStarDate":"2026-01-27"},"樂":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891930598,"lastStarDate":"2026-01-27"},"橘":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892230196,"lastStarDate":"2026-01-27"},"歌":{"interval":1,"ease":2.5,"reps":1,"nextReview":1769632492746,"lastStarDate":"2026-01-27"},"水":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891673675,"lastStarDate":"2026-01-27"},"注":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"洗":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892535627,"lastStarDate":"2026-01-27"},"潤":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892005998,"lastStarDate":"2026-01-27"},"濕":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891933849,"lastStarDate":"2026-01-27"},"炒":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891989074,"lastStarDate":"2026-01-27"},"煮":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891996992,"lastStarDate":"2026-01-27"},"牙":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892029915,"lastStarDate":"2026-01-27"},"狗":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892531860,"lastStarDate":"2026-01-27"},"猩":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892048617,"lastStarDate":"2026-01-27"},"猴":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891754624,"lastStarDate":"2026-01-27"},"玩":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892233831,"lastStarDate":"2026-01-27"},"球":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891776257,"lastStarDate":"2026-01-27"},"生":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892237732,"lastStarDate":"2026-01-27"},"男":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892035248,"lastStarDate":"2026-01-27"},"畫":{"interval":1,"ease":2.5,"reps":1,"nextReview":1769638805227,"lastStarDate":"2026-01-27"},"病":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"白":{"interval":1,"ease":2.5,"reps":1,"nextReview":1769638867114,"lastStarDate":"2026-01-27"},"皮":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892243784,"lastStarDate":"2026-01-27"},"眉":{"interval":1,"ease":2.5,"reps":1,"nextReview":1769632501413,"lastStarDate":"2026-01-27"},"石":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891780509,"lastStarDate":"2026-01-27"},"笑":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891764823,"lastStarDate":"2026-01-27"},"筆":{"interval":1,"ease":2.5,"reps":1,"nextReview":1769632558737,"lastStarDate":"2026-01-27"},"筷":{"interval":1,"ease":2.5,"reps":1,"nextReview":1769632925831,"lastStarDate":"2026-01-27"},"米":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769897733049,"lastStarDate":"2026-01-27"},"粉":{"interval":1,"ease":2.5,"reps":1,"nextReview":1769632588291,"lastStarDate":"2026-01-27"},"紅":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891768456,"lastStarDate":"2026-01-27"},"綠":{"interval":1,"ease":2.5,"reps":1,"nextReview":1769638840075,"lastStarDate":"2026-01-27"},"羊":{"interval":1,"ease":2.5,"reps":1,"nextReview":1769632592543,"lastStarDate":"2026-01-27"},"老":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891771490,"lastStarDate":"2026-01-27"},"耳":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892130766,"lastStarDate":"2026-01-27"},"肉":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769891796027,"lastStarDate":"2026-01-27"},"肚":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892540407,"lastStarDate":"2026-01-27"},"舞":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"色":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"芒":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"花":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892135067,"lastStarDate":"2026-01-27"},"草":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892054067,"lastStarDate":"2026-01-27"},"葡":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892248600,"lastStarDate":"2026-01-27"},"藍":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769897816347,"lastStarDate":"2026-01-27"},"蘋":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769897821548,"lastStarDate":"2026-01-27"},"蛇":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892254100,"lastStarDate":"2026-01-27"},"引":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"豆":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892142434,"lastStarDate":"2026-01-27"},"豬":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892158522,"lastStarDate":"2026-01-27"},"貓":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769897715832,"lastStarDate":"2026-01-27"},"買":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892145302,"lastStarDate":"2026-01-27"},"起":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"跳":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892162821,"lastStarDate":"2026-01-27"},"車":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892547345,"lastStarDate":"2026-01-27"},"過":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"酪":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"鋼":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892260769,"lastStarDate":"2026-01-27"},"錢":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"開":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892434975,"lastStarDate":"2026-01-27"},"阿":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892268067,"lastStarDate":"2026-01-27"},"雞":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"雪":{"interval":1,"ease":2.35,"reps":1,"nextReview":1769638714397,"lastStarDate":"2026-01-27"},"電":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892333096,"lastStarDate":"2026-01-27"},"鞋":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"頭":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892550696,"lastStarDate":"2026-01-27"},"飛":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769897638720,"lastStarDate":"2026-01-27"},"飽":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892274421,"lastStarDate":"2026-01-27"},"餅":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892337980,"lastStarDate":"2026-01-27"},"養":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"馬":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892556363,"lastStarDate":"2026-01-27"},"高":{"interval":1,"ease":2.15,"reps":1,"nextReview":1769638752654,"lastStarDate":"2026-01-27"},"髮":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"鬆":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892437945,"lastStarDate":"2026-01-27"},"魚":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892357898,"lastStarDate":"2026-01-27"},"鴨":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"鹿":{"interval":4,"ease":2.4499999999999997,"reps":1,"nextReview":1769897782109,"lastStarDate":"2026-01-27"},"黃":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769897792743,"lastStarDate":"2026-01-27"},"黑":{"interval":0,"ease":2.3,"reps":0,"nextReview":1769552460480,"lastStarDate":null},"鼠":{"interval":0,"ease":2.5,"reps":0,"nextReview":1769545775024,"lastStarDate":null},"鼻":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892365484,"lastStarDate":"2026-01-27"},"船":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769897642270,"lastStarDate":"2026-01-27"},"香":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892368802,"lastStarDate":"2026-01-27"},"一":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892371867,"lastStarDate":"2026-01-27"},"三":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892388554,"lastStarDate":"2026-01-27"},"二":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892450847,"lastStarDate":"2026-01-27"},"五":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892385520,"lastStarDate":"2026-01-27"},"人":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892380354,"lastStarDate":"2026-01-27"},"兔":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892443830,"lastStarDate":"2026-01-27"},"哥":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892446594,"lastStarDate":"2026-01-27"},"坐":{"interval":4,"ease":2.4499999999999997,"reps":1,"nextReview":1769897755571,"lastStarDate":"2026-01-27"},"大":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892559230,"lastStarDate":"2026-01-27"},"妹":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892448615,"lastStarDate":"2026-01-27"},"媽":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769897644904,"lastStarDate":"2026-01-27"},"小":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892577951,"lastStarDate":"2026-01-27"},"星":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769897647921,"lastStarDate":"2026-01-27"},"月":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892454698,"lastStarDate":"2026-01-27"},"火":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892461015,"lastStarDate":"2026-01-27"},"熊":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892457296,"lastStarDate":"2026-01-27"},"爸":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769892463349,"lastStarDate":"2026-01-27"},"菜":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769897651772,"lastStarDate":"2026-01-27"},"蛋":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769897654939,"lastStarDate":"2026-01-27"},"醫":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769897658490,"lastStarDate":"2026-01-27"},"門":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769897663707,"lastStarDate":"2026-01-27"},"飯":{"interval":4,"ease":2.65,"reps":1,"nextReview":1769897667543,"lastStarDate":"2026-01-27"}},"words":{},"similarPairs":[],"stickers":["🦋","🍓","💎","🐰","🌸","🌙","🧁","🍦","🌙","🩰","🎈","💎","🩰"],"currentStars":0,"streak":1,"lastActivityDate":"2026-01-27","dailyHistory":{"2026-01-27":true},"wishes":[{"id":1769551876557,"text":"去博物館！","count":50}]};
+    
+    // ===== 初始化標記（僅用於記錄是否曾初始化過，不影響 seed 行為）=====
+    const SEED_FLAG = APP_ID + ':seed_applied_v2026_01_27';
+    
     let currentViewDate = new Date();
     let currentTab = 'all', reviewQueue = [];
     let quizData = { current: 0, total: 0, score: 0 };
-    const STICKER_POOL = ["🦄", "👸", "🍭", "🎡", "城堡", "🏰", "🧜‍♀️", "🧚", "🦋", "🌈", "🧁", "🎀", "🐱", "🐰", "🩰", "💎", "🍓", "🌸", "⭐", "🌙", "🦉", "🎨", "🍦", "🎈", "👒"];
+    const STICKER_POOL = ["🦄", "👸", "🍭", "🎡", "🏰", "🧜‍♀️", "🧚", "🦋", "🌈", "🧁", "🎀", "🐱", "🐰", "🩰", "💎", "🍓", "🌸", "⭐", "🌙", "🦉", "🎨", "🍦", "🎈", "👒"];
+
+    // ===== 可調整的常數 =====
+    const STAR_TARGET = 10;              // 集滿幾顆星換貼紙
+    const STICKER_MAX = 200;             // 貼紙牆上限
+    const HISTORY_DAYS = 365;            // dailyHistory 保留天數
+    const QUIZ_MAX_Q = 10;               // 辨識大挑戰最多幾題
+    const HARD_REVIEW_MS = 2 * 60 * 60 * 1000;   // 困難：2 小時後再看
+    const MIN_REVIEW_GAP_MS = 5 * 60 * 1000;     // 最小間隔：5 分鐘
+
+    // ===== 正規化 State（補齊缺欄位、驗證資料格式）=====
+    function normalizeState(inputState) {
+        console.log('[normalizeState] 開始驗證與正規化...');
+        
+        // 限制說明：JSON 物件解析後重複 key 會被覆蓋，無法在此偵測原始重複
+        // 若需偵測，請在貼入 JSON 字串前使用 regex 掃描
+        
+        // Deep copy
+        const result = JSON.parse(JSON.stringify(inputState));
+        
+        // 預設結構
+        const defaultStructure = {
+            characters: {},
+            words: {},
+            similarPairs: [],
+            stickers: [],
+            currentStars: 0,
+            streak: 0,
+            lastActivityDate: null,
+            dailyHistory: {},
+            wishes: []
+        };
+        
+        // 保護性合併：確保所有欄位存在
+        Object.keys(defaultStructure).forEach(key => {
+            if (result[key] === undefined) {
+                console.warn(`[normalizeState] 缺少欄位 "${key}"，已補上預設值`);
+                result[key] = defaultStructure[key];
+            }
+        });
+        
+        // 型別防呆：characters/words 必須是純物件（非 null/array/string）
+        if (!result.characters || typeof result.characters !== 'object' || Array.isArray(result.characters)) {
+            console.warn('[normalizeState] characters 型別錯誤，已重置為 {}');
+            result.characters = {};
+        }
+        if (!result.words || typeof result.words !== 'object' || Array.isArray(result.words)) {
+            console.warn('[normalizeState] words 型別錯誤，已重置為 {}');
+            result.words = {};
+        }
+        
+        // 驗證 characters
+        const charDefault = { interval: 0, ease: 2.5, reps: 0, nextReview: Date.now(), lastStarDate: null, lastSRSDate: null };
+        let fixedCount = 0;
+        
+        Object.entries(result.characters).forEach(([char, data]) => {
+            // entry data 型別防呆：非 object 則重置
+            if (!data || typeof data !== 'object' || Array.isArray(data)) {
+                result.characters[char] = { ...charDefault };
+                fixedCount++;
+                return;
+            }
+            
+            let fixed = false;
+            
+            // 檢查必要欄位
+            Object.keys(charDefault).forEach(field => {
+                if (data[field] === undefined) {
+                    data[field] = charDefault[field];
+                    fixed = true;
+                }
+            });
+            
+            // 範圍限制與型別修正
+            data.interval = clamp(data.interval, 0, 3650);  // 最多 10 年
+            data.ease = clamp(data.ease, 1.3, 3.5);         // SM-2 常見範圍
+            data.reps = clamp(data.reps, 0, 9999);
+            
+            // 確保 nextReview 是有效數字（先轉 Number 再檢查，避免字串 timestamp 被誤判）
+            data.nextReview = Number(data.nextReview);
+            if (!Number.isFinite(data.nextReview)) {
+                console.warn(`[normalizeState] 字 "${char}" 的 nextReview 無效，已修正`);
+                data.nextReview = Date.now();
+                fixed = true;
+            }
+            
+            if (fixed) fixedCount++;
+        });
+        
+        // 同樣驗證 words
+        Object.entries(result.words).forEach(([word, data]) => {
+            // entry data 型別防呆
+            if (!data || typeof data !== 'object' || Array.isArray(data)) {
+                result.words[word] = { ...charDefault };
+                return;
+            }
+            
+            Object.keys(charDefault).forEach(field => {
+                if (data[field] === undefined) {
+                    data[field] = charDefault[field];
+                }
+            });
+            // 範圍限制
+            data.interval = clamp(data.interval, 0, 3650);
+            data.ease = clamp(data.ease, 1.3, 3.5);
+            data.reps = clamp(data.reps, 0, 9999);
+            // 先轉 Number 再檢查
+            data.nextReview = Number(data.nextReview);
+            if (!Number.isFinite(data.nextReview)) {
+                data.nextReview = Date.now();
+            }
+        });
+        
+        console.log(`[normalizeState] 驗證完成。字數: ${Object.keys(result.characters).length}, 修正項目: ${fixedCount}`);
+        
+        return result;
+    }
 
     window.onload = function() {
         const saved = localStorage.getItem(APP_ID);
-        if (saved) state = JSON.parse(saved);
-        else initDefaultData();
+        const seedApplied = localStorage.getItem(SEED_FLAG);
+        
+        if (!saved) {
+            // 沒資料才 seed
+            console.log('[window.onload] localStorage 無資料，套用 SEEDED_STATE...');
+            state = normalizeState(SEEDED_STATE);
+            save();
+            localStorage.setItem(SEED_FLAG, 'true');
+            console.log('[window.onload] SEEDED_STATE 已套用');
+        } else {
+            // 有資料就用資料（必要時正規化）
+            state = normalizeState(JSON.parse(saved));
+            save(); // 把補齊後的狀態存回去
+            console.log('[window.onload] 沿用 localStorage 資料（已正規化）');
+            // 確保 flag 存在（舊版升級時可能沒有）
+            if (!seedApplied) localStorage.setItem(SEED_FLAG, 'true');
+        }
+        
         checkStreak();
         render();
         updateStarMeter();
     };
 
+    // 保留原本的 initDefaultData 作為備用（不再使用，但不刪除以防萬一）
     function initDefaultData() {
         const raw = "上下不丟乳亮佩來個優公冰冷剪動去友口吃呀呆哈啊喝喵嘴四園土地多太女姨子孩宛少尿山師帽弟心快愛我手打搬書朋木東果桃桌樂橘歌水注洗潤濕炒煮牙狗猩猴玩球生男畫病白皮眉石笑筆筷米粉紅綠羊老耳肉肚舞色芒花草葡藍蘋蛇引豆豬貓買起跳車過酪鋼錢開阿雞雪電鞋頭飛飽餅養馬高髮鬆魚鴨鹿黃黑鼠鼻船香一三二五人兔哥坐大妹媽小星月火熊爸菜蛋醫門飯";
         const now = Date.now();
@@ -344,11 +595,14 @@
     }
 
     function pruneState() {
-        if (state.stickers && state.stickers.length > 200) state.stickers = state.stickers.slice(-200);
-        const keys = Object.keys(state.dailyHistory);
-        if (keys.length > 365) {
-            const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 365);
-            keys.forEach(k => { if (new Date(k) < cutoff) delete state.dailyHistory[k]; });
+        if (state.stickers && state.stickers.length > STICKER_MAX) state.stickers = state.stickers.slice(-STICKER_MAX);
+        const keys = Object.keys(state.dailyHistory || {});
+        if (keys.length > HISTORY_DAYS) {
+            const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - HISTORY_DAYS);
+            keys.forEach(k => { 
+                // 一致化日期解析，避免時區問題
+                if (new Date(k + "T00:00:00") < cutoff) delete state.dailyHistory[k]; 
+            });
         }
     }
 
@@ -361,28 +615,50 @@
     function resetCalendarView() { currentViewDate = new Date(); renderCalendar(); }
 
     function checkStreak() {
-        const today = new Date().toISOString().split('T')[0];
-        if (state.lastActivityDate && state.lastActivityDate !== today) {
-            const last = new Date(state.lastActivityDate);
-            const current = new Date(today);
-            const diffDays = Math.ceil((current - last) / (86400000));
-            if (diffDays > 1) state.streak = 0;
+        const today = localDateStr();
+        const last = state.lastActivityDate;
+        
+        if (!last) return;
+        
+        // 用日期字串比較，避免時區/夏令時間問題
+        const yesterday = addDays(today, -1);
+        
+        if (last !== today && last !== yesterday) {
+            state.streak = 0;
+            save();
         }
     }
 
     function recordDailyActivity() {
-        const today = new Date().toISOString().split('T')[0];
-        if (!state.dailyHistory[today]) {
-            state.dailyHistory[today] = true;
-            if (state.lastActivityDate !== today) {
-                state.streak = (state.streak || 0) + 1;
-                state.lastActivityDate = today;
-                fireConfetti();
-                showNotification(`習慣點亮！獲得皇冠 👑`);
-            }
-            save();
-            render();
+        const today = localDateStr();
+        if (state.dailyHistory[today]) return; // 今天已記錄過，不重複處理
+
+        state.dailyHistory[today] = true;
+
+        const last = state.lastActivityDate;
+        const yesterday = addDays(today, -1);
+
+        if (!last) {
+            // 首次活動
+            state.streak = 1;
+        } else if (last === yesterday) {
+            // 連續：昨天有活動
+            state.streak = (state.streak || 0) + 1;
+        } else if (last === today) {
+            // 同一天（理論上不會到這，因為上面已 return）
+            // do nothing
+        } else {
+            // 斷掉了（不是昨天也不是今天）
+            state.streak = 1;
         }
+
+        state.lastActivityDate = today;
+
+        fireConfetti();
+        showNotification(`習慣點亮！獲得皇冠 👑`);
+
+        save();
+        render();
     }
 
     function renderCalendar() {
@@ -391,7 +667,7 @@
         if (!grid || !title) return;
         grid.innerHTML = '';
         const year = currentViewDate.getFullYear(), month = currentViewDate.getMonth();
-        const realTodayStr = new Date().toISOString().split('T')[0];
+        const realTodayStr = localDateStr();
         const monthNames = ["一月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "十二月"];
         title.innerText = `${year} ${monthNames[month]}`;
         ['日', '一', '二', '三', '四', '五', '六'].forEach(d => {
@@ -414,24 +690,68 @@
         }
     }
 
+    // 統一「session 下一張」入口，避免跳卡或重複
+    function advanceReviewSession() {
+        reviewQueue.shift();
+        showNextReview();
+    }
+
     function handleSRS(key, rating, isSession) {
-        recordDailyActivity();
-        const pool = state.characters[key] ? state.characters : state.words;
-        const item = pool[key];
-        const today = new Date().toISOString().split('T')[0];
+        // 只有「記得以上」才算打卡（忘記不算完成練習）
+        if (rating > 1) recordDailyActivity();
+        
+        // 防呆：檢查 key 是否存在
+        const pool = state.characters[key] ? state.characters : (state.words[key] ? state.words : null);
+        if (!pool) {
+            showNotification("資料怪怪的，找不到這個字/詞");
+            closeModal();
+            return;
+        }
+        
+        const item = pool[key] || { interval: 0, ease: 2.5, reps: 0, nextReview: Date.now(), lastStarDate: null, lastSRSDate: null };
+        const today = localDateStr();
+        const alreadyUpdatedToday = (item.lastSRSDate === today);
 
-        const updated = calculateSRS(item, rating);
-        pool[key] = updated;
+        // ===== SRS 排程邏輯：同日只能變近，不能變遠 =====
+        if (!alreadyUpdatedToday) {
+            // 今天第一次：正常跑 SRS
+            const updated = calculateSRS(item, rating);
+            pool[key] = updated;
+            pool[key].lastSRSDate = today;
+        } else {
+            // 今天已經更新過排程：只允許「忘記/困難」拉近，不允許「記得/太簡單」推遠
+            if (rating === 1) {
+                // 忘記：強制明天再見
+                item.reps = 0;
+                item.interval = 1;
+                item.ease = Math.max(1.3, (item.ease || 2.5) - 0.2);
+                item.nextReview = Date.now() + 86400000;
+            } else if (rating === 2) {
+                // 困難：稍後再看（但有最小間隔，避免立即重複）
+                const soon = Date.now() + HARD_REVIEW_MS;
+                item.nextReview = Math.min(item.nextReview || soon, soon);
+                item.nextReview = Math.max(item.nextReview, Date.now() + MIN_REVIEW_GAP_MS);
+                item.ease = Math.max(1.3, (item.ease || 2.5) - 0.15);
+                
+                // Session 模式：把這個字塞回 queue 尾端，今天還能再練到
+                if (isSession && !reviewQueue.includes(key)) {
+                    reviewQueue.push(key);
+                }
+            }
+            // rating 3/4（記得/太簡單）：不動排程，避免推遠
+            pool[key] = item;
+        }
 
+        // ===== 星星邏輯：依舊用 lastStarDate 控制（每天一次）=====
         let earnedStar = false;
-        // 安全優化：使用明確的路徑賦值與檢查
         if (rating > 1 && pool[key].lastStarDate !== today) {
             state.currentStars = (state.currentStars || 0) + 1;
             pool[key].lastStarDate = today; 
             earnedStar = true;
         }
 
-        if (state.currentStars >= 10) {
+        // ===== UI 回饋 =====
+        if (state.currentStars >= STAR_TARGET) {
             state.currentStars = 0;
             save();
             updateStarMeter(); 
@@ -439,11 +759,18 @@
         } else {
             updateStarMeter(); 
             save(); 
-            if (isSession) { reviewQueue.shift(); showNextReview(); }
+            if (isSession) { advanceReviewSession(); }
             else { closeModal(); render(); }
-            if (earnedStar) showNotification("星星 +1 ✨");
-            else if (rating > 1) showNotification("今天領過星囉 🌸");
-            else showNotification("沒關係，多看幾次就會記住囉！💖");
+            
+            // 通知訊息（用「是否已領星」事實判斷，而非 SRS 更新狀態）
+            if (earnedStar) {
+                showNotification("星星 +1 ✨");
+            } else if (rating > 1) {
+                // 沒得到星 = 今天已經領過這個字的星了
+                showNotification("今天領過星囉，再熟悉一下！🌸");
+            } else {
+                showNotification("沒關係，多看幾次就會記住囉！💖");
+            }
         }
     }
 
@@ -460,26 +787,42 @@
                 <h2 style="color:var(--primary); line-height:1.4;">星星集滿囉！<br>獲得一張新貼紙！</h2>
                 <div style="font-size: 110px; animation: bounce 1s infinite; margin: 20px 0;">${newSticker}</div>
             </div>
-            <button class="btn btn-primary" style="width:100%; height:55px; border-radius:25px;" onclick="closeModal(); ${isSessionOrQuiz ? 'if(reviewQueue.length>0)showNextReview();' : 'render();'}">收下貼紙，繼續冒險</button>
+            <button class="btn btn-primary" style="width:100%; height:55px; border-radius:25px;" onclick="closeRewardAndContinue(${isSessionOrQuiz})">收下貼紙，繼續冒險</button>
         `;
         document.getElementById('modal-overlay').style.display = 'flex';
     }
 
+    // 統一收下貼紙後的邏輯
+    function closeRewardAndContinue(isSession) {
+        closeModal();
+        if (isSession && reviewQueue.length > 0) {
+            advanceReviewSession();
+        } else {
+            render();
+        }
+    }
+
     function checkQuiz(btn, sel, tar) {
-        const today = new Date().toISOString().split('T')[0];
-        const item = state.characters[tar] || state.words[tar];
+        const today = localDateStr();
         let starAwarded = false;
         
-        // 鎖定所有按鈕，防止重覆點擊
-        const btns = document.querySelectorAll('#modal-content .btn-outline');
+        // 鎖定本題選項按鈕，防止重覆點擊（用明確 id 更穩定）
+        const container = document.getElementById('quiz-options');
+        const btns = container.querySelectorAll('button');
         btns.forEach(b => b.disabled = true);
 
         if(sel === tar) { 
             btn.style.backgroundColor="#DFF9FB"; 
             btn.style.borderColor="var(--success)";
             quizData.score++; 
-            if (item && item.lastStarDate !== today) {
-                state.currentStars++;
+            
+            // Quiz 答對也算打卡（計入 streak）
+            recordDailyActivity();
+            
+            // 使用 ensureCharExists 確保字存在，答對一定能發星
+            const item = ensureCharExists(tar);
+            if (item.lastStarDate !== today) {
+                state.currentStars = (state.currentStars || 0) + 1;
                 item.lastStarDate = today;
                 starAwarded = true;
             }
@@ -497,7 +840,7 @@
         
         save(); 
 
-        if (state.currentStars >= 10) {
+        if (state.currentStars >= STAR_TARGET) {
             state.currentStars = 0;
             save();
             updateStarMeter();
@@ -517,36 +860,72 @@
         const box = document.getElementById('star-box'), needed = document.getElementById('stars-needed');
         if (!box || !needed) return;
         const count = state.currentStars || 0;
-        needed.innerText = Math.max(0, 10 - count);
-        box.innerHTML = Array(10).fill(0).map((_,i) => `<span style="opacity:${i<count?1:0.2}">${i<count?'⭐':'⚪'}</span>`).join('');
+        needed.innerText = Math.max(0, STAR_TARGET - count);
+        box.innerHTML = Array(STAR_TARGET).fill(0).map((_,i) => `<span style="opacity:${i<count?1:0.2}">${i<count?'⭐':'⚪'}</span>`).join('');
+        
+        // 修正：首頁貼紙預覽只顯示最近 8 張，並加上「更多」提示
         const preview = document.getElementById('sticker-preview');
-        preview.innerHTML = '<span style="font-size: 11px; color: #FF7EB9; font-weight: 700;">貼紙簿：</span>';
-        (state.stickers || []).slice(-12).forEach(s => {
-            const span = document.createElement('span'); span.style.fontSize="26px"; span.innerText=s; preview.appendChild(span);
+        preview.innerHTML = '<span style="font-size: 11px; color: #FF7EB9; font-weight: 700; flex-shrink: 0;">貼紙簿：</span>';
+        const allStickers = state.stickers || [];
+        const displayStickers = allStickers.slice(-8); // 只顯示最近 8 張
+        displayStickers.forEach(s => {
+            const span = document.createElement('span'); 
+            span.style.fontSize = "24px"; 
+            span.style.flexShrink = "0";
+            span.innerText = s; 
+            preview.appendChild(span);
         });
+        // 如果有更多貼紙，顯示數量提示
+        if (allStickers.length > 8) {
+            const more = document.createElement('span');
+            more.style.cssText = 'font-size: 10px; color: #A1887F; flex-shrink: 0; margin-left: 4px;';
+            more.innerText = `+${allStickers.length - 8}`;
+            preview.appendChild(more);
+        }
     }
 
     function calculateSRS(item, rating) {
-        let { interval = 0, ease = 2.5, reps = 0, lastStarDate = null } = item;
+        let { interval = 0, ease = 2.5, reps = 0, lastStarDate = null, lastSRSDate = null } = item;
         const now = Date.now();
-        if (rating === 1) { reps = 0; interval = 0; ease = Math.max(1.3, ease - 0.2); }
+        if (rating === 1) { 
+            // 忘記：明天見
+            reps = 0; 
+            interval = 1;
+            ease = Math.max(1.3, ease - 0.2); 
+        }
+        else if (rating === 2) {
+            // 困難：保守處理，interval 維持或小幅縮短（不要推遠）
+            if (reps === 0) interval = 1;
+            else interval = Math.max(1, Math.ceil(interval * 0.8)); // 縮短 20%
+            reps++;
+            ease = Math.max(1.3, ease - 0.15);
+        }
         else {
+            // 記得(3) / 太簡單(4)：正常推進
             if (reps === 0) interval = (rating === 4) ? 4 : 1;
             else if (reps === 1) interval = 6;
-            else interval = Math.ceil(interval * (rating === 2 ? 1.2 : (rating === 4 ? ease * 1.3 : ease)));
+            else interval = Math.ceil(interval * (rating === 4 ? ease * 1.3 : ease));
             reps++;
-            if (rating === 2) ease = Math.max(1.3, ease - 0.15);
             if (rating === 4) ease += 0.15;
         }
-        return { interval, ease, reps, nextReview: now + (interval * 86400000), lastStarDate };
+        return { interval, ease, reps, nextReview: now + (interval * 86400000), lastStarDate, lastSRSDate };
     }
 
     function render() {
+        // 每次 render 檢查 streak（解決頁面長時間開著跨日的問題）
+        checkStreak();
+        
         const chars = Object.entries(state.characters), words = Object.entries(state.words);
         const all = [...chars, ...words], now = Date.now();
+        
+        // 計算一次待複習數量（避免重複掃描）
+        const dueCount = all.reduce((acc, [,v]) => acc + (v.nextReview <= now ? 1 : 0), 0);
+        
         document.getElementById('total-count').innerText = all.length;
-        document.getElementById('review-count').innerText = all.filter(([k,v])=>v.nextReview<=now).length;
+        document.getElementById('review-count').innerText = dueCount;
         document.getElementById('streak-count').innerText = state.streak || 0;
+        document.getElementById('start-review-btn').className = dueCount > 0 ? 'btn btn-primary btn-review-alert' : 'btn btn-primary';
+        
         renderCalendar();
         const bar = document.getElementById('fam-bar'); bar.innerHTML = '';
         [{c:'#FFDAB9',f:v=>v.interval>30},{c:'#E2D5F0',f:v=>v.interval>10&&v.interval<=30},{c:'#FAD0C4',f:v=>v.interval>3&&v.interval<=10},{c:'#FFD1DC',f:v=>v.interval>=0&&v.interval<=3}].forEach(t=>{
@@ -559,10 +938,10 @@
             const card = document.createElement('div'); card.className='char-card'; card.style.backgroundColor=getCardColor(v.interval);
             card.onclick=()=>openSingleFlashcard(k);
             const d = new Date(v.nextReview || now);
-            card.innerHTML=`<div class="char-text" style="font-size:${k.length>4?'12px':(k.length>2?'18px':'28px')}">${k}</div><div class="review-date">${d.getMonth()+1}/${d.getDate()}</div>`;
+            // 使用 escapeHtml 防止 XSS
+            card.innerHTML=`<div class="char-text" style="font-size:${k.length>4?'12px':(k.length>2?'18px':'28px')}">${escapeHtml(k)}</div><div class="review-date">${d.getMonth()+1}/${d.getDate()}</div>`;
             container.appendChild(card);
         });
-        document.getElementById('start-review-btn').className = all.filter(([k,v])=>v.nextReview<=now).length > 0 ? 'btn btn-primary btn-review-alert' : 'btn btn-primary';
     }
 
     function openSingleFlashcard(k) { renderSRSContent(k, false); document.getElementById('modal-overlay').style.display='flex'; }
@@ -570,16 +949,18 @@
     function renderSRSContent(k, s) {
         const content = document.getElementById('modal-content'); 
         let fs = k.length===1?'180px':(k.length===2?'130px':(k.length===3?'90px':'70px'));
+        const safeK = escapeHtml(k);
+        const jsK = JSON.stringify(k);  // 安全的 JS 字串常值
         content.innerHTML = `
             <button onclick="closeModal()" style="position:absolute;top:20px;right:20px;border:none;background:none;font-size:28px;color:#ccc;">✕</button>
-            <div class="flashcard-main" style="font-size:${fs}">${k}</div>
+            <div class="flashcard-main" style="font-size:${fs}">${safeK}</div>
             <div style="width:100%;">
                 <p style="font-size:10px; color:#A1887F; margin-bottom:10px; text-align:center;">家長記錄熟悉度</p>
                 <div class="srs-controls">
-                    <button class="srs-btn btn-again" onclick="handleSRS('${k}',1,${s})">忘記<span>明天見</span></button>
-                    <button class="srs-btn btn-hard" onclick="handleSRS('${k}',2,${s})">困難<span>再看一次</span></button>
-                    <button class="srs-btn btn-good" onclick="handleSRS('${k}',3,${s})">記得<span>穩步長大</span></button>
-                    <button class="srs-btn btn-easy" onclick="handleSRS('${k}',4,${s})">太簡單<span>跳級</span></button>
+                    <button class="srs-btn btn-again" onclick="handleSRS(${jsK},1,${s})">忘記<span>明天見</span></button>
+                    <button class="srs-btn btn-hard" onclick="handleSRS(${jsK},2,${s})">困難<span>再看一次</span></button>
+                    <button class="srs-btn btn-good" onclick="handleSRS(${jsK},3,${s})">記得<span>穩步長大</span></button>
+                    <button class="srs-btn btn-easy" onclick="handleSRS(${jsK},4,${s})">太簡單<span>跳級</span></button>
                 </div>
             </div>`;
     }
@@ -594,7 +975,7 @@
 
     function startQuizSession() {
         if(!state.similarPairs || state.similarPairs.length === 0) return showNotification("先去設定相近字喔！");
-        quizData = { current: 1, total: Math.min(10, state.similarPairs.length), score: 0 };
+        quizData = { current: 1, total: Math.min(QUIZ_MAX_Q, state.similarPairs.length), score: 0 };
         renderQuizStep(); document.getElementById('modal-overlay').style.display = 'flex';
     }
 
@@ -603,54 +984,93 @@
         const pair = state.similarPairs[Math.floor(Math.random() * state.similarPairs.length)];
         const target = Math.random() > 0.5 ? pair.c1 : pair.c2;
         const options = [pair.c1, pair.c2].sort(() => Math.random() - 0.5);
+        const safeTarget = escapeHtml(target);
+        const jsTarget = JSON.stringify(target);
         document.getElementById('modal-content').innerHTML = `
             <div style="position:absolute; top:20px; font-size:14px; color:var(--primary); font-weight:700;">✨ 第 ${quizData.current} / ${quizData.total} 題 ✨</div>
-            <div style="margin-top:40px;">找到這個字：</div><div class="flashcard-main" style="font-size:130px;margin:20px 0;">${target}</div>
-            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; width:100%;">${options.map(o=>`<button class="btn btn-outline" style="font-size:65px; padding:25px; border-radius:30px; height:140px; font-weight:700;" onclick="checkQuiz(this,'${o}','${target}')">${o}</button>`).join('')}</div>`;
+            <div style="margin-top:40px;">找到這個字：</div><div class="flashcard-main" style="font-size:130px;margin:20px 0;">${safeTarget}</div>
+            <div id="quiz-options" style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; width:100%;">${options.map(o=>`<button class="btn btn-outline" style="font-size:65px; padding:25px; border-radius:30px; height:140px; font-weight:700;" onclick="checkQuiz(this,${JSON.stringify(o)},${jsTarget})">${escapeHtml(o)}</button>`).join('')}</div>`;
     }
 
     function renderQuizResult() { fireConfetti(); document.getElementById('modal-content').innerHTML = `<div class="flashcard-main" style="flex-direction:column; font-size:24px;"><h2 style="color:var(--primary);">🎊 挑戰完成！</h2><div style="font-size:80px; margin: 20px 0;">🏆</div><div style="font-weight:700;">妳答對了 ${quizData.score} 題！</div></div><button class="btn btn-primary" style="width:100%; height:55px; border-radius:25px;" onclick="closeModal()">回主頁看月曆</button>`; save(); }
 
     function openParentalGuide() {
         const content = document.getElementById('modal-content');
-        content.innerHTML = `<button onclick="closeModal()" style="position:absolute; top:20px; right:20px; border:none; background:none; font-size:28px; color:#ccc;">✕</button><h2 style="color:var(--primary);">📖 家長導航說明書</h2><div class="guide-section"><h3>🔒 公平獎勵機制</h3><p><strong>每個字每天不論模式只能領一次星星</strong>。這能確保獎勵的珍貴性，並防止孩子重複刷分。</p><h3>📅 冒險月曆</h3><p>👑 代表當天有練習。建議與孩子約定集滿整個月的現實獎勵。</p><h3>🧠 記憶科學</h3><p>系統自動計算複習天數，資料也會自動瘦身（保留最近365天）以維持系統流暢。</p></div><button class="btn btn-primary" style="width:100%; margin-top:20px;" onclick="closeModal()">了解了</button>`;
+        content.innerHTML = `<button onclick="closeModal()" style="position:absolute; top:20px; right:20px; border:none; background:none; font-size:28px; color:#ccc;">✕</button><h2 style="color:var(--primary);">📖 家長導航說明書</h2><div class="guide-section"><h3>🔒 公平獎勵機制</h3><p><strong>每個字每天不論模式只能領一次星星</strong>。這能確保獎勵的珍貴性，並防止孩子重複刷分。</p><h3>📅 冒險月曆</h3><p>👑 代表當天有練習。建議與孩子約定集滿整個月的現實獎勵。</p><h3>🧠 記憶科學</h3><p>系統自動計算複習天數，資料也會自動瘦身（保留最近365天）以維持系統流暢。</p><h3>🎯 辨識大挑戰</h3><p>答對的相近字會自動加入字庫，方便後續複習追蹤。</p></div><button class="btn btn-primary" style="width:100%; margin-top:20px;" onclick="closeModal()">了解了</button>`;
         document.getElementById('modal-overlay').style.display = 'flex';
     }
 
     function openSimilarManager() {
-        const listHtml = (state.similarPairs || []).map(p => `<div style="display:flex; justify-content:space-between; align-items:center; width:100%; padding:10px; border-bottom:1px solid #FFF0F5;"><span style="font-size:22px; font-weight:700;">${p.c1} ↔ ${p.c2}</span><button onclick="removePair(${p.id})" style="color:var(--danger); border:none; background:none; font-size:18px;">🗑️</button></div>`).join('');
-        document.getElementById('modal-content').innerHTML = `<button onclick="closeModal()" style="position:absolute; top:20px; right:20px; border:none; background:none; font-size:28px; color:#ccc;">✕</button><h2 style="color:var(--primary); margin-bottom:15px;">⚙️ 相近字管理</h2><div style="background:#FFF0F5; padding:20px; border-radius:24px; width:100%; margin-bottom:20px;"><div style="display:flex; gap:10px; justify-content:center;"><input type="text" id="sim-c1" maxlength="1" placeholder="字" style="width:60px; text-align:center; padding:10px; border:2px solid #FFD1DC; border-radius:12px; font-size:20px; font-weight:700;"><input type="text" id="sim-c2" maxlength="1" placeholder="字" style="width:60px; text-align:center; padding:10px; border:2px solid #FFD1DC; border-radius:12px; font-size:20px; font-weight:700;"><button class="btn btn-primary" onclick="addPair()">新增</button></div></div><div style="width:100%; max-height:300px; overflow-y:auto;">${listHtml || '<p style="text-align:center; color:#ccc;">設定容易混淆的字組</p>'}</div>`;
+        const listHtml = (state.similarPairs || []).map(p => `<div style="display:flex; justify-content:space-between; align-items:center; width:100%; padding:10px; border-bottom:1px solid #FFF0F5;"><span style="font-size:22px; font-weight:700;">${escapeHtml(p.c1)} ↔ ${escapeHtml(p.c2)}</span><button onclick="removePair(${JSON.stringify(p.id)})" style="color:var(--danger); border:none; background:none; font-size:18px;">🗑️</button></div>`).join('');
+        document.getElementById('modal-content').innerHTML = `<button onclick="closeModal()" style="position:absolute; top:20px; right:20px; border:none; background:none; font-size:28px; color:#ccc;">✕</button><h2 style="color:var(--primary); margin-bottom:15px;">⚙️ 相近字管理</h2><div style="background:#FFF0F5; padding:20px; border-radius:24px; width:100%; margin-bottom:20px;"><div style="display:flex; gap:10px; justify-content:center;"><input type="text" id="sim-c1" maxlength="1" placeholder="字" style="width:60px; text-align:center; padding:10px; border:2px solid #FFD1DC; border-radius:12px; font-size:20px; font-weight:700;"><input type="text" id="sim-c2" maxlength="1" placeholder="字" style="width:60px; text-align:center; padding:10px; border:2px solid #FFD1DC; border-radius:12px; font-size:20px; font-weight:700;"><button class="btn btn-primary" onclick="addPair()">新增</button></div></div><div style="width:100%;">${listHtml || '<p style="text-align:center; color:#ccc;">設定容易混淆的字組</p>'}</div>`;
         document.getElementById('modal-overlay').style.display = 'flex';
     }
 
     function addPair() {
         const c1 = document.getElementById('sim-c1').value.trim(), c2 = document.getElementById('sim-c2').value.trim();
-        if(c1 && c2 && c1 !== c2) { state.similarPairs.push({id:Date.now(), c1, c2}); save(); openSimilarManager(); render(); }
+        if(!c1 || !c2 || c1 === c2) return;
+        
+        // 檢查是否已存在（含互換順序）
+        const exists = (state.similarPairs || []).some(p => 
+            (p.c1 === c1 && p.c2 === c2) || (p.c1 === c2 && p.c2 === c1)
+        );
+        if (exists) {
+            return showNotification('這組相近字已經存在囉～');
+        }
+        
+        state.similarPairs.push({id: Date.now(), c1, c2}); 
+        save(); 
+        openSimilarManager(); 
+        render();
     }
     function removePair(id){ state.similarPairs = state.similarPairs.filter(p=>p.id!==id); save(); openSimilarManager(); render(); }
     
+    // 貼紙牆顯示狀態（用於分批載入）
+    let stickerWallShowAll = false;
+    
+    // 修正：貼紙牆使用新的佈局結構 + 分批顯示避免卡頓
     function openStickerWall() {
-        const count = (state.stickers || []).length;
-        const stickerHtml = (state.stickers || []).map(s => `<div style="font-size:48px; cursor:pointer;" onclick="this.style.transform='scale(2)';setTimeout(()=>this.style.transform='scale(1)',300)">${s}</div>`).join('');
+        const allStickers = state.stickers || [];
+        const count = allStickers.length;
+        const STICKER_PREVIEW_LIMIT = 60;
+        
+        // 分批顯示：預設只顯示最近 60 張
+        const displayStickers = stickerWallShowAll ? allStickers : allStickers.slice(-STICKER_PREVIEW_LIMIT);
+        const hasMore = !stickerWallShowAll && count > STICKER_PREVIEW_LIMIT;
+        
+        const stickerHtml = displayStickers.map(s => `<div style="font-size:48px; cursor:pointer; transition: transform 0.2s;" onclick="this.style.transform='scale(1.5)';setTimeout(()=>this.style.transform='scale(1)',300)">${escapeHtml(s)}</div>`).join('');
+        const showMoreBtn = hasMore ? `<div style="grid-column:span 4; text-align:center; padding:10px;"><button class="btn btn-outline" onclick="stickerWallShowAll=true;openStickerWall();" style="font-size:12px; padding:8px 16px;">顯示全部 ${count} 張</button></div>` : '';
+        
         const wishesHtml = (state.wishes || []).map(w => {
             const pct = Math.min(100, (count / w.count) * 100);
-            return `<div class="wish-item"><div class="wish-header"><span>🎁 ${w.text}</span><span>${count} / ${w.count}</span></div><div class="wish-progress-bg"><div class="wish-progress-fill" style="width:${pct}%"></div></div><button onclick="removeWish(${w.id})" style="background:none; border:none; color:#ccc; font-size:10px; margin-top:5px;">🗑️ 移除</button></div>`;
+            const safeText = escapeHtml(w.text);
+            return `<div class="wish-item"><div class="wish-header"><span>🎁 ${safeText}</span><span>${count} / ${w.count}</span></div><div class="wish-progress-bg"><div class="wish-progress-fill" style="width:${pct}%"></div></div><button onclick="removeWish(${JSON.stringify(w.id)})" style="background:none; border:none; color:#ccc; font-size:10px; margin-top:5px;">🗑️ 移除</button></div>`;
         }).join('');
+        
         document.getElementById('modal-content').innerHTML = `
-            <button onclick="closeModal()" style="position:absolute; top:20px; right:20px; border:none; background:none; font-size:28px; color:#ccc;">✕</button>
-            <h2 style="color:var(--primary); margin-top:10px;">✨ 妹妹的夢幻貼紙牆 ✨</h2>
-            <div style="margin: 10px 0; font-size:12px; color:#8d6e63;">妳總共收集了 <strong>${count}</strong> 張貼紙！</div>
-            <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; width:100%; padding:20px 0; min-height:100px;">
-                ${stickerHtml || '<p style="grid-column:span 4; color:#ccc;">趕快冒險收集貼紙吧</p>'}
-            </div>
-            <div style="width:100%; background:#FFF0F5; padding:20px; border-radius:28px; margin-top:auto;">
-                <h3 style="font-size:14px; color:var(--primary); margin-bottom:15px; text-align:center;">🌟 魔法願望清單</h3>
-                ${wishesHtml}
-                <div style="margin-top:15px; border-top:1px dashed #FFD1DC; padding-top:15px;">
-                    <input type="text" id="new-wish-text" placeholder="輸入願望..." style="width:100%; padding:8px; border:1px solid #FFD1DC; border-radius:10px; margin-bottom:8px; font-size:12px;">
-                    <div style="display:flex; gap:10px;">
-                        <input type="number" id="new-wish-count" placeholder="需幾張?" style="width:60%; padding:8px; border:1px solid #FFD1DC; border-radius:10px; font-size:12px;">
-                        <button class="btn btn-primary" onclick="addWish()" style="flex:1;">➕</button>
+            <button onclick="stickerWallShowAll=false;closeModal()" style="position:absolute; top:20px; right:20px; border:none; background:none; font-size:28px; color:#ccc; z-index:10;">✕</button>
+            <div class="sticker-wall-container">
+                <div class="sticker-wall-header">
+                    <h2 style="color:var(--primary); margin: 10px 0 5px 0;">✨ 妹妹的夢幻貼紙牆 ✨</h2>
+                    <div style="font-size:12px; color:#8d6e63;">妳總共收集了 <strong style="color:var(--primary); font-size:16px;">${count}</strong> 張貼紙！</div>
+                </div>
+                
+                <div class="sticker-grid-wrapper">
+                    <div class="sticker-grid">
+                        ${stickerHtml || '<p style="grid-column:span 4; color:#ccc; text-align:center;">趕快冒險收集貼紙吧</p>'}
+                        ${showMoreBtn}
+                    </div>
+                </div>
+                
+                <div class="wish-section">
+                    <h3 style="font-size:14px; color:var(--primary); margin: 0 0 15px 0; text-align:center;">🌟 魔法願望清單</h3>
+                    ${wishesHtml}
+                    <div style="margin-top:15px; border-top:1px dashed #FFD1DC; padding-top:15px;">
+                        <input type="text" id="new-wish-text" placeholder="輸入願望..." style="width:100%; padding:8px; border:1px solid #FFD1DC; border-radius:10px; margin-bottom:8px; font-size:12px;">
+                        <div style="display:flex; gap:10px;">
+                            <input type="number" id="new-wish-count" placeholder="需幾張?" style="width:60%; padding:8px; border:1px solid #FFD1DC; border-radius:10px; font-size:12px;">
+                            <button class="btn btn-primary" onclick="addWish()" style="flex:1;">➕</button>
+                        </div>
                     </div>
                 </div>
             </div>`;
@@ -659,12 +1079,18 @@
 
     function addWish() {
         const text = document.getElementById('new-wish-text').value.trim();
-        const count = parseInt(document.getElementById('new-wish-count').value);
-        if(text && count) {
-            if(!state.wishes) state.wishes = [];
-            state.wishes.push({ id: Date.now(), text, count });
-            save(); openStickerWall();
+        const count = Number(document.getElementById('new-wish-count').value);
+        
+        if (!text) {
+            return showNotification('請輸入願望內容喔～');
         }
+        if (!Number.isFinite(count) || count <= 0 || !Number.isInteger(count)) {
+            return showNotification('請輸入正確的張數（正整數）');
+        }
+        
+        if(!state.wishes) state.wishes = [];
+        state.wishes.push({ id: Date.now(), text, count });
+        save(); openStickerWall();
     }
 
     function removeWish(id) {
@@ -673,17 +1099,83 @@
     }
 
     function quickAdd(t) {
-        const i = document.getElementById(t==='char'?'add-char-input':'add-word-input'), v = i.value.trim(); if(!v)return;
-        const now = Date.now(); if(t==='char') Array.from(v).forEach(c=>{if(!state.characters[c])state.characters[c]={interval:0,ease:2.5,reps:0,nextReview:now,lastStarDate:null}});
-        else { state.words[v]={interval:0,ease:2.5,reps:0,nextReview:now,lastStarDate:null}; Array.from(v).forEach(c=>{if(!state.characters[c]&&/[\u4e00-\u9fa5]/.test(c))state.characters[c]={interval:0,ease:2.5,reps:0,nextReview:now,lastStarDate:null}});}
+        const i = document.getElementById(t==='char'?'add-char-input':'add-word-input');
+        let v = i.value.trim(); 
+        if(!v) return;
+        
+        const now = Date.now(); 
+        if(t==='char') {
+            // 清洗輸入：去掉「、」「,」「，」等分隔符
+            v = normalizeInputChars(v);
+            if(!v) return;
+            Array.from(v).forEach(c => {
+                // 只加入中文字（擴展到 \u9fff 更完整）
+                if(/[\u4e00-\u9fff]/.test(c) && !state.characters[c]) {
+                    state.characters[c] = {interval:0, ease:2.5, reps:0, nextReview:now, lastStarDate:null, lastSRSDate:null};
+                }
+            });
+        } else { 
+            // 詞語至少要包含一個中文字
+            if (!/[\u4e00-\u9fff]/.test(v)) {
+                return showNotification('請輸入中文詞語喔～');
+            }
+            // 不覆蓋已存在的詞（保護學習進度）
+            if (state.words[v]) {
+                i.value='';
+                return showNotification('這個詞已經在詞庫囉～');
+            }
+            state.words[v] = {interval:0, ease:2.5, reps:0, nextReview:now, lastStarDate:null, lastSRSDate:null}; 
+            Array.from(v).forEach(c => {
+                if(!state.characters[c] && /[\u4e00-\u9fff]/.test(c)) {
+                    state.characters[c] = {interval:0, ease:2.5, reps:0, nextReview:now, lastStarDate:null, lastSRSDate:null};
+                }
+            });
+        }
         i.value=''; save(); render(); showNotification('夥伴加入囉！');
     }
 
     function setTab(t, e) { currentTab=t; document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active')); e.classList.add('active'); render(); }
     function closeModal(){document.getElementById('modal-overlay').style.display='none';}
     function showNotification(m){const d=document.createElement('div');d.className='notification';d.innerText=m;document.getElementById('notification-container').appendChild(d);setTimeout(()=>d.remove(),2000);}
-    function exportData(){const a=document.createElement('a');a.href="data:text/json;charset=utf-8,"+encodeURIComponent(JSON.stringify(state));a.download=`妹妹認字_${new Date().toISOString().slice(0,10)}.json`;a.click();}
-    function importData(event){const f=event.target.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{try{const d=JSON.parse(e.target.result);if(d.learners&&d.learners.sister){const sis=d.learners.sister.data.characters;state.characters={};state.words={};Object.entries(sis).forEach(([k,v])=>{const i = (v.level===4?60:v.level===3?14:v.level===2?7:v.level===1?3:0); state.characters[k]={interval:i,ease:2.5,reps:v.level||0,nextReview:v.nextReview||Date.now(),lastStarDate:null};});}else state=d;save();render();updateStarMeter();showNotification('載入成功！');}catch(x){showNotification('錯誤');}};r.readAsText(f);}
+    function exportData(){const a=document.createElement('a');a.href="data:text/json;charset=utf-8,"+encodeURIComponent(JSON.stringify(state));a.download=`妹妹認字_${localDateStr()}.json`;a.click();}
+    function importData(event){
+        const f=event.target.files[0];if(!f)return;
+        const r=new FileReader();
+        r.onload=e=>{
+            try{
+                const d=JSON.parse(e.target.result);
+                const defaultState = {
+                    characters: {}, words: {}, similarPairs: [], stickers: [], currentStars: 0,
+                    streak: 0, lastActivityDate: null, dailyHistory: {}, wishes: []
+                };
+                
+                if(d.learners&&d.learners.sister){
+                    // 舊格式：learners/sister 結構
+                    const sis=d.learners.sister.data.characters;
+                    let imported = { ...defaultState, characters: {}, words: {} };
+                    
+                    Object.entries(sis).forEach(([k,v])=>{
+                        const i = (v.level===4?60:v.level===3?14:v.level===2?7:v.level===1?3:0); 
+                        imported.characters[k] = {
+                            interval: i,
+                            ease: 2.5,
+                            reps: v.level || 0,
+                            nextReview: v.nextReview || Date.now(),
+                            lastStarDate: null
+                        };
+                    });
+                    
+                    state = normalizeState(imported);
+                } else {
+                    // 新格式：直接匯入（用 normalizeState 補齊所有欄位）
+                    state = normalizeState({ ...defaultState, ...d });
+                }
+                
+                save();render();updateStarMeter();showNotification('載入成功！');
+            }catch(x){console.error(x);showNotification('載入錯誤');}
+        };
+        r.readAsText(f);
+    }
 </script>
 </body>
 </html>
